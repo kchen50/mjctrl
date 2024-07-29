@@ -13,8 +13,8 @@ damping: float = 1e-4
 
 # Gains for the twist computation. These should be between 0 and 1. 0 means no
 # movement, 1 means move the end-effector to the target in one integration step.
-Kpos: float = 0.95
-Kori: float = 0.95
+Kpos: float = 1# 0.95
+Kori: float = 1#0.95
 
 # Whether to enable gravity compensation.
 gravity_compensation: bool = True
@@ -44,6 +44,12 @@ def main() -> None:
     site_name = "attachment_site"
     site_id = model.site(site_name).id
 
+    # End-effector body we wish to control
+    body_name = "attachment"
+    body_id = model.body(body_name).id
+
+    # print(body_id)
+
     # Get the dof and actuator ids for the joints we wish to control. These are copied
     # from the XML file. Feel free to comment out some joints to see the effect on
     # the controller.
@@ -56,8 +62,12 @@ def main() -> None:
         "joint6",
         "joint7",
     ]
+    qpos_ids = np.array([model.joint(name).qposadr[0] for name in joint_names])
     dof_ids = np.array([model.joint(name).id for name in joint_names])
     actuator_ids = np.array([model.actuator(name).id for name in joint_names])
+
+    # print(qpos_ids, dof_ids)
+    # print(model.jnt_range)
 
     # Initial joint configuration saved as a keyframe in the XML file.
     key_name = "home"
@@ -91,27 +101,62 @@ def main() -> None:
 
         # Enable site frame visualization.
         viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
+        
+        # data.qpos[qpos_ids] = 0
 
+        mujoco.mj_step(model, data)
+
+        viewer.sync()
+
+        ct = 0
         while viewer.is_running():
-            step_start = time.time()
+            print(f"\n\niteration {ct}")
+
+            ct += 1
+            step_start = time.time()   
 
             # Spatial velocity (aka twist).
             dx = data.mocap_pos[mocap_id] - data.site(site_id).xpos
-            twist[:3] = Kpos * dx / integration_dt
             mujoco.mju_mat2Quat(site_quat, data.site(site_id).xmat)
             mujoco.mju_negQuat(site_quat_conj, site_quat)
             mujoco.mju_mulQuat(error_quat, data.mocap_quat[mocap_id], site_quat_conj)
             mujoco.mju_quat2Vel(twist[3:], error_quat, 1.0)
-            twist[3:] *= Kori / integration_dt
+
+            print(twist)
+
+            print("dtheta: ", twist[3:])
+            print("error_quat: ", error_quat)
+            print("goal_quat: ", data.mocap_quat[mocap_id])
+            print("curr_quat_conj: ", site_quat_conj)
+            print("curr_quat: ", site_quat)
+            print(data.qpos[qpos_ids])
+            
+            twist[:3] = dx
+            # twist[:3] = Kpos * dx / integration_dt
+            # twist[3:] *= Kori / integration_dt
+            # twist[3:] = 0
+            # print(error_quat)
 
             # Jacobian.
             mujoco.mj_jacSite(model, data, jac[:3], jac[3:], site_id)
+            mujoco.mj_jacBody(model, data, jac[:3], jac[3:], body_id)
+            # print(jac)
+            #if ct >= 5: break
+            # print(jac)
 
+            #time.sleep(2)
+            # print(data.qpos[:7])
+            # print(data.mocap_pos[mocap_id], data.site(site_id).xpos, dx)
+            # print(twist)
+            # print("\n")
+            # print(jac)
+            # continue
             # Damped least squares.
             dq = np.linalg.solve(jac.T @ jac + diag, jac.T @ twist)
+            print(dq)
 
             # Nullspace control biasing joint velocities towards the home configuration.
-            dq += (eye - np.linalg.pinv(jac) @ jac) @ (Kn * (q0 - data.qpos[dof_ids]))
+            # dq += (eye - np.linalg.pinv(jac) @ jac) @ (Kn * (q0 - data.qpos[dof_ids]))
 
             # Clamp maximum joint velocity.
             dq_abs_max = np.abs(dq).max()

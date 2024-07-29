@@ -129,7 +129,10 @@ def main() -> None:
             mujoco.mj_integratePos(model, q, dq, integration_dt)
 
             # Set the control signal.
+            print(q, model.jnt_range.T.shape)
             np.clip(q, *model.jnt_range.T, out=q)
+            print(q)
+            print(q.shape, model.jnt_range[0].shape, model.jnt_range[1].shape, q.shape)
             data.ctrl[actuator_ids] = q[dof_ids]
 
             # Step the simulation.
